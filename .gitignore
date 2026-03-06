@@ -5,6 +5,8 @@
 api/.venv/
 api/__pycache__/
 api/.pytest_cache/
+**/__pycache__/
+*.py[cod]
 
 # Node / Electron
 desktop/node_modules/
