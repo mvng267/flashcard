@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: flashcard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: flashcard
+      POSTGRES_USER: flashcard
+      POSTGRES_PASSWORD: flashcard
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

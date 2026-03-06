@@ -1,0 +1,9 @@
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+SQLAlchemy==2.0.38
+psycopg2-binary==2.9.10
+python-jose[cryptography]==3.3.0
+passlib==1.7.4
+python-dotenv==1.0.1
+pydantic[email]==2.10.6
+pydantic-settings==2.8.1

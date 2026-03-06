@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Python
+api/.venv/
+api/__pycache__/
+api/.pytest_cache/
+
+# Node / Electron
+desktop/node_modules/
+desktop/dist/
+
+# Env
+*.env
+api/.env
+desktop/.env
