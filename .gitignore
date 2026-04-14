@@ -16,3 +16,6 @@ desktop/dist/
 *.env
 api/.env
 desktop/.env
+
+# local build artifacts
+desktop/release/

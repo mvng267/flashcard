@@ -1,3 +1,3 @@
-from . import auth, library, me, reports, study
+from . import auth, library, me, messages, reports, social, study
 
-__all__ = ["auth", "library", "me", "reports", "study"]
+__all__ = ["auth", "library", "me", "messages", "reports", "social", "study"]

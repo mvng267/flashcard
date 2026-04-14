@@ -1,16 +1,21 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  AlertCircle,
   BookCheck,
   BookOpen,
   ChartNoAxesCombined,
+  CheckCircle2,
   Clock3,
   Filter,
   LayoutGrid,
   Play,
   Search,
+  Share2,
+  SlidersHorizontal,
   Table2,
   Target,
+  Trash2,
   X,
 } from "lucide-react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -28,6 +33,13 @@ type DeckRow = {
   report?: DeckBreakdown;
 };
 
+type RemoveState = {
+  open: boolean;
+  deckId: number | null;
+  deckTitle: string;
+  loading: boolean;
+};
+
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
 
@@ -43,6 +55,13 @@ const Dashboard: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("card");
   const [sortMode, setSortMode] = useState<SortMode>("pending-first");
+  const [showFilterPopover, setShowFilterPopover] = useState(false);
+  const [removeState, setRemoveState] = useState<RemoveState>({
+    open: false,
+    deckId: null,
+    deckTitle: "",
+    loading: false,
+  });
 
   const loadData = async () => {
     setLoading(true);
@@ -67,6 +86,41 @@ const Dashboard: React.FC = () => {
     }
 
     setLoading(false);
+  };
+
+  const openRemoveModal = (deck: UserDeck) => {
+    setRemoveState({
+      open: true,
+      deckId: deck.id,
+      deckTitle: deck.title,
+      loading: false,
+    });
+  };
+
+  const closeRemoveModal = () => {
+    setRemoveState((prev) => (prev.loading ? prev : { ...prev, open: false, deckId: null, deckTitle: "" }));
+  };
+
+  const confirmRemoveDeck = async () => {
+    if (!removeState.deckId) return;
+
+    try {
+      setRemoveState((prev) => ({ ...prev, loading: true }));
+      await api.deleteDeck(removeState.deckId);
+      setDecks((prev) => prev.filter((d) => d.id !== removeState.deckId));
+      setDetailedReport((prev) =>
+        prev
+          ? {
+              ...prev,
+              deck_breakdown: prev.deck_breakdown.filter((item) => item.deck_id !== removeState.deckId),
+            }
+          : prev,
+      );
+      setRemoveState({ open: false, deckId: null, deckTitle: "", loading: false });
+    } catch (error) {
+      setError(getApiError(error, "Gỡ deck thất bại"));
+      setRemoveState((prev) => ({ ...prev, loading: false }));
+    }
   };
 
   useEffect(() => {
@@ -159,111 +213,139 @@ const Dashboard: React.FC = () => {
   };
 
   return (
-    <div className="space-y-7">
-      <header className="rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/45 p-6">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+    <div className="app-page">
+      <header className="rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/45 p-4 md:p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Flashcard của mày</h1>
-            <p className="mt-2 max-w-2xl text-sm text-slate-400">
-              Màn này chỉ để quản lý deck đã cài: tách rõ bài đã làm/chưa làm hôm nay, kèm báo cáo nhanh trực tiếp trên
-              thẻ.
+            <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Flashcard của mày</h1>
+            <p className="mt-1 text-xs md:text-sm text-slate-400 max-w-2xl">
+              Quản lý deck đã cài và theo dõi tiến độ học trong ngày.
             </p>
           </div>
 
           <div className="inline-flex w-fit rounded-xl border border-slate-700 bg-slate-950 p-1 text-xs">
             <ModeButton active={viewMode === "card"} onClick={() => setViewMode("card")}>
-              <LayoutGrid size={14} /> Dạng thẻ
+              <LayoutGrid size={14} /> Thẻ
             </ModeButton>
             <ModeButton active={viewMode === "table"} onClick={() => setViewMode("table")}>
-              <Table2 size={14} /> Dạng bảng
+              <Table2 size={14} /> Bảng
             </ModeButton>
           </div>
         </div>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard title="Tổng deck đã cài" value={stats.total} icon={<BookOpen size={16} />} tone="slate" />
         <MetricCard title="Chưa làm hôm nay" value={stats.pending} icon={<Clock3 size={16} />} tone="amber" />
         <MetricCard title="Đã làm hôm nay" value={stats.done} icon={<BookCheck size={16} />} tone="emerald" />
         <MetricCard title="Tổng thẻ đến hạn" value={stats.dueCards} icon={<Target size={16} />} tone="sky" />
       </section>
 
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-        <div className="grid gap-3 xl:grid-cols-[1.4fr_0.8fr_0.8fr_1fr_auto]">
-          <label className="relative">
+      <section className="app-card p-3 md:p-4">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <label className="relative min-w-[320px] flex-[2] max-w-3xl">
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Tìm deck theo tên, mô tả, topic, level..."
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-9 py-2.5 text-sm outline-none focus:border-indigo-400"
+              placeholder="Tìm deck..."
+              className="app-input h-11 px-10 text-sm md:text-[15px] focus:border-indigo-400"
             />
           </label>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm outline-none focus:border-indigo-400"
-          >
-            <option value="all">Tất cả trạng thái</option>
-            <option value="pending">Chưa làm hôm nay</option>
-            <option value="done">Đã làm hôm nay</option>
-          </select>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowFilterPopover((prev) => !prev)}
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm font-semibold text-slate-200 hover:bg-slate-800"
+            >
+              <SlidersHorizontal size={15} /> Lọc
+              {hasActiveFilters ? <span className="h-2 w-2 rounded-full bg-sky-400" /> : null}
+            </button>
 
-          <select
-            value={topicFilter}
-            onChange={(e) => setTopicFilter(e.target.value)}
-            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm outline-none focus:border-indigo-400"
-          >
-            {topics.map((topic) => (
-              <option key={topic} value={topic}>
-                {topic === "all" ? "Tất cả chủ đề" : topic}
-              </option>
-            ))}
-          </select>
+            {showFilterPopover && (
+              <div className="absolute right-0 top-12 z-40 w-[330px] rounded-2xl border border-slate-800 bg-slate-900 p-3 shadow-2xl">
+                <div className="grid gap-2">
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                    className="app-input h-9 px-3 text-sm focus:border-indigo-400"
+                  >
+                    <option value="all">Tất cả trạng thái</option>
+                    <option value="pending">Chưa làm hôm nay</option>
+                    <option value="done">Đã làm hôm nay</option>
+                  </select>
 
-          <select
-            value={levelFilter}
-            onChange={(e) => setLevelFilter(e.target.value)}
-            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm outline-none focus:border-indigo-400"
-          >
-            {levels.map((level) => (
-              <option key={level} value={level}>
-                {level === "all" ? "Tất cả level" : level}
-              </option>
-            ))}
-          </select>
+                  <select
+                    value={topicFilter}
+                    onChange={(e) => setTopicFilter(e.target.value)}
+                    className="app-input h-10 px-3 text-sm font-medium focus:border-indigo-400"
+                  >
+                    {topics.map((topic) => (
+                      <option key={topic} value={topic}>
+                        {topic === "all" ? "Tất cả chủ đề" : topic}
+                      </option>
+                    ))}
+                  </select>
 
-          <select
-            value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as SortMode)}
-            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm outline-none focus:border-indigo-400"
-          >
-            <option value="pending-first">Ưu tiên deck chưa làm</option>
-            <option value="title-asc">Sắp theo tên A-Z</option>
-            <option value="accuracy-desc">Sắp theo độ chính xác</option>
-          </select>
-        </div>
+                  <select
+                    value={levelFilter}
+                    onChange={(e) => setLevelFilter(e.target.value)}
+                    className="app-input h-9 px-3 text-sm focus:border-indigo-400"
+                  >
+                    {levels.map((level) => (
+                      <option key={level} value={level}>
+                        {level === "all" ? "Tất cả level" : level}
+                      </option>
+                    ))}
+                  </select>
 
-        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-400">
-          <div className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5">
-            <Filter size={12} />
-            Đang hiển thị <span className="font-semibold text-slate-200">{rows.length}</span> / {decks.length} deck
+                  <select
+                    value={sortMode}
+                    onChange={(e) => setSortMode(e.target.value as SortMode)}
+                    className="app-input h-9 px-3 text-sm focus:border-indigo-400"
+                  >
+                    <option value="pending-first">Ưu tiên deck chưa làm</option>
+                    <option value="title-asc">Sắp theo tên A-Z</option>
+                    <option value="accuracy-desc">Sắp theo độ chính xác</option>
+                  </select>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between">
+                  <button
+                    onClick={clearFilters}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                  >
+                    <X size={12} /> Reset
+                  </button>
+                  <button
+                    onClick={() => setShowFilterPopover(false)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20"
+                  >
+                    <CheckCircle2 size={12} /> Xong
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <button
             type="button"
             onClick={clearFilters}
             disabled={!hasActiveFilters}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <X size={12} /> Xoá bộ lọc
+            <X size={14} /> Reset
           </button>
+
+          <div className="ml-auto inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/70 px-2 py-1 text-[11px] text-slate-300">
+            <Filter size={12} /> {rows.length}/{decks.length}
+          </div>
         </div>
       </section>
 
       {loading && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-400">Đang tải flashcard...</div>
+        <div className="app-card-soft p-5 text-sm text-slate-400">Đang tải flashcard...</div>
       )}
 
       {error && (
@@ -280,12 +362,15 @@ const Dashboard: React.FC = () => {
 
       {!loading && !error && rows.length === 0 && (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">
-          Không có deck nào khớp bộ lọc hiện tại.
+          <div className="inline-flex items-center gap-2 text-slate-300">
+            <AlertCircle size={16} className="text-amber-300" />
+            Không có deck nào khớp bộ lọc hiện tại.
+          </div>
         </div>
       )}
 
       {!loading && !error && rows.length > 0 && viewMode === "card" && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           {(statusFilter === "all" || statusFilter === "pending") && (
             <DeckSection
               title="Chưa làm hôm nay"
@@ -294,6 +379,7 @@ const Dashboard: React.FC = () => {
               emptyMessage="Không còn deck nào chưa làm."
               tone="amber"
               onNavigate={navigate}
+              onOpenSettings={openRemoveModal}
             />
           )}
 
@@ -306,24 +392,25 @@ const Dashboard: React.FC = () => {
               tone="emerald"
               onNavigate={navigate}
               withReport
+              onOpenSettings={openRemoveModal}
             />
           )}
         </div>
       )}
 
       {!loading && !error && rows.length > 0 && viewMode === "table" && (
-        <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/65">
+        <section className="overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900/80 to-slate-900/60 shadow-xl">
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400">
-                  <th className="px-4 py-3 font-medium">Deck</th>
-                  <th className="px-4 py-3 font-medium">Topic / Level</th>
-                  <th className="px-4 py-3 font-medium">Tổng thẻ</th>
-                  <th className="px-4 py-3 font-medium">Đến hạn</th>
-                  <th className="px-4 py-3 font-medium">Trạng thái</th>
-                  <th className="px-4 py-3 font-medium">Báo cáo nhanh</th>
-                  <th className="px-4 py-3 font-medium text-right">Hành động</th>
+                <tr className="border-b border-slate-800 bg-slate-950/70 text-slate-300">
+                  <th className="px-4 py-3 font-semibold">Deck</th>
+                  <th className="px-4 py-3 font-semibold">Topic / Level</th>
+                  <th className="px-4 py-3 font-semibold">Tổng thẻ</th>
+                  <th className="px-4 py-3 font-semibold">Đến hạn</th>
+                  <th className="px-4 py-3 font-semibold">Trạng thái</th>
+                  <th className="px-4 py-3 font-semibold">Báo cáo nhanh</th>
+                  <th className="px-4 py-3 font-semibold text-right">Hành động</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/40">
@@ -331,14 +418,21 @@ const Dashboard: React.FC = () => {
                   const { deck, done, report } = row;
 
                   return (
-                    <tr key={deck.id} className="hover:bg-slate-800/30 transition">
+                    <tr key={deck.id} className="hover:bg-slate-800/45 transition-colors duration-150">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-slate-100">{deck.title}</p>
-                        <p className="mt-1 line-clamp-2 text-xs text-slate-400">{deck.description || "Không có mô tả"}</p>
+                        <div className="inline-flex items-center gap-2">
+                          <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-indigo-300">
+                            <BookOpen size={14} />
+                          </span>
+                          <p className="font-semibold text-slate-100">{deck.title}</p>
+                        </div>
+                        <p className="mt-1 line-clamp-2 pl-9 text-xs text-slate-400">{deck.description || "Không có mô tả"}</p>
                       </td>
                       <td className="px-4 py-3">
-                        <p className="text-slate-200">{deck.topic}</p>
-                        <p className="text-xs text-slate-500">{deck.level}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-xs text-slate-300">{deck.topic}</span>
+                          <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-xs text-sky-300">{deck.level}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-slate-300">{deck.total_cards}</td>
                       <td className="px-4 py-3 text-slate-300">{deck.due_cards}</td>
@@ -357,6 +451,10 @@ const Dashboard: React.FC = () => {
                         {done ? (
                           report ? (
                             <div className="space-y-1.5 text-[11px]">
+                              <div className="flex justify-between text-slate-400 mb-0.5">
+                                <span>Lượt học: {report.study_sessions}</span>
+                                <span>Bài tập: {report.exercise_attempts}</span>
+                              </div>
                               <SimpleProgress label="Độ chính xác" value={report.accuracy_percent} color="sky" />
                               <SimpleProgress
                                 label="Điểm bài tập"
@@ -374,16 +472,28 @@ const Dashboard: React.FC = () => {
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
                           <button
-                            onClick={() => navigate(`/study/${deck.id}?mode=due`)}
+                            onClick={() => navigate(`/study/${deck.id}?mode=${done ? "practice" : "due"}`)}
                             className="rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
                           >
-                            Học
+                            {done ? "Luyện" : "Học"}
                           </button>
                           <button
                             onClick={() => navigate(`/study/${deck.id}?mode=exercise`)}
-                            className="rounded-lg bg-indigo-500 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400"
+                            disabled={!done}
+                            title={!done ? "Học flashcard trước rồi mới làm bài tập" : undefined}
+                            className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
+                              done
+                                ? "bg-indigo-500 text-white hover:bg-indigo-400"
+                                : "cursor-not-allowed border border-slate-700 bg-slate-900 text-slate-500"
+                            }`}
                           >
                             Bài tập
+                          </button>
+                          <button
+                            onClick={() => openRemoveModal(deck)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-xs text-red-300 hover:bg-red-500/20"
+                          >
+                            <Trash2 size={12} /> Xóa
                           </button>
                         </div>
                       </td>
@@ -394,6 +504,34 @@ const Dashboard: React.FC = () => {
             </table>
           </div>
         </section>
+      )}
+
+      {removeState.open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-slate-100">Gỡ bộ thẻ khỏi tài khoản?</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              Bộ thẻ <b className="text-slate-200">{removeState.deckTitle}</b> sẽ bị ẩn khỏi Dashboard.
+              Log học tập tổng vẫn giữ lại.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={closeRemoveModal}
+                disabled={removeState.loading}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={() => void confirmRemoveDeck()}
+                disabled={removeState.loading}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+              >
+                <Trash2 size={14} /> {removeState.loading ? "Đang gỡ..." : "Xác nhận gỡ"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -407,6 +545,7 @@ type DeckSectionProps = {
   tone: "amber" | "emerald";
   withReport?: boolean;
   onNavigate: ReturnType<typeof useNavigate>;
+  onOpenSettings: (deck: UserDeck) => void;
 };
 
 const DeckSection: React.FC<DeckSectionProps> = ({
@@ -417,13 +556,14 @@ const DeckSection: React.FC<DeckSectionProps> = ({
   tone,
   withReport = false,
   onNavigate,
+  onOpenSettings,
 }) => {
   return (
-    <section className="space-y-3">
+    <section className="space-y-2.5">
       <div className="flex items-end justify-between">
         <div>
-          <h2 className="text-xl font-semibold">{title}</h2>
-          <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <p className="mt-0.5 text-xs text-slate-400">{subtitle}</p>
         </div>
         <span
           className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
@@ -439,9 +579,9 @@ const DeckSection: React.FC<DeckSectionProps> = ({
       {rows.length === 0 ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 text-sm text-slate-400">{emptyMessage}</div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {rows.map((row) => (
-            <DeckCard key={row.deck.id} row={row} withReport={withReport} onNavigate={onNavigate} />
+            <DeckCard key={row.deck.id} row={row} withReport={withReport} onNavigate={onNavigate} onOpenSettings={onOpenSettings} />
           ))}
         </div>
       )}
@@ -453,12 +593,13 @@ const DeckCard: React.FC<{
   row: DeckRow;
   withReport: boolean;
   onNavigate: ReturnType<typeof useNavigate>;
-}> = ({ row, withReport, onNavigate }) => {
+  onOpenSettings: (deck: UserDeck) => void;
+}> = ({ row, withReport, onNavigate, onOpenSettings }) => {
   const { deck, done, report } = row;
 
   return (
     <article
-      className={`rounded-2xl border p-4 transition hover:-translate-y-0.5 ${
+      className={`rounded-2xl border p-3.5 transition hover:-translate-y-0.5 ${
         done
           ? "border-emerald-500/25 bg-gradient-to-b from-slate-900/75 to-emerald-950/20"
           : "border-amber-500/25 bg-gradient-to-b from-slate-900/75 to-amber-950/20"
@@ -488,7 +629,7 @@ const DeckCard: React.FC<{
       </div>
 
       {withReport && done && (
-        <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+        <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-2.5">
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-emerald-200">
             <ChartNoAxesCombined size={14} /> Báo cáo nhanh 30 ngày
           </div>
@@ -496,11 +637,12 @@ const DeckCard: React.FC<{
           {report ? (
             <>
               <DoneMiniChart report={report} />
-              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-slate-300">
-                <InfoPill label="Ôn tập" value={`${report.review_count}`} />
-                <InfoPill label="Acc" value={`${report.accuracy_percent}%`} />
-                <InfoPill label="Bài tập" value={`${report.exercise_attempts}`} />
-              </div>
+                <div className="mt-2 grid grid-cols-4 gap-1.5 text-[11px] text-slate-300">
+                  <InfoPill label="Học" value={`${report.study_sessions}`} />
+                  <InfoPill label="Ôn tập" value={`${report.review_count}`} />
+                  <InfoPill label="Acc" value={`${report.accuracy_percent}%`} />
+                  <InfoPill label="Bài tập" value={`${report.exercise_attempts}`} />
+                </div>
             </>
           ) : (
             <div className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-400">
@@ -511,29 +653,41 @@ const DeckCard: React.FC<{
       )}
 
       {!done && (
-        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-200">
           Còn <b>{deck.due_cards}</b> thẻ chưa xử lý hôm nay.
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-3 gap-2">
+      <div className="mt-3 grid grid-cols-2 gap-2">
         <button
-          onClick={() => onNavigate(`/study/${deck.id}?mode=due`)}
+          onClick={() => onNavigate(`/study/${deck.id}?mode=${done ? "practice" : "due"}`)}
           className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-700 px-2 py-2 text-xs text-slate-200 hover:bg-slate-800"
         >
-          <Play size={13} /> Học
-        </button>
-        <button
-          onClick={() => onNavigate(`/study/${deck.id}?mode=practice`)}
-          className="rounded-lg bg-emerald-500 px-2 py-2 text-xs font-semibold text-slate-950 hover:bg-emerald-400"
-        >
-          Luyện
+          <Play size={13} /> {done ? "Luyện" : "Học"}
         </button>
         <button
           onClick={() => onNavigate(`/study/${deck.id}?mode=exercise`)}
-          className="rounded-lg bg-indigo-500 px-2 py-2 text-xs font-semibold text-white hover:bg-indigo-400"
+          disabled={!done}
+          title={!done ? "Học flashcard trước rồi mới làm bài tập" : undefined}
+          className={`rounded-lg px-2 py-2 text-xs font-semibold ${
+            done
+              ? "bg-indigo-500 text-white hover:bg-indigo-400"
+              : "cursor-not-allowed border border-slate-700 bg-slate-900 text-slate-500"
+          }`}
         >
           Bài tập
+        </button>
+        <button
+          onClick={() => onNavigate(`/social?share_deck_id=${deck.id}`)}
+          className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-300 hover:text-sky-300 transition"
+        >
+          <Share2 size={13} /> Share
+        </button>
+        <button
+          onClick={() => onOpenSettings(deck)}
+          className="inline-flex items-center justify-center gap-1 rounded-lg border border-red-500/40 bg-red-500/10 px-2 py-2 text-xs text-red-300 hover:bg-red-500/20"
+        >
+          <Trash2 size={13} /> Xóa
         </button>
       </div>
     </article>

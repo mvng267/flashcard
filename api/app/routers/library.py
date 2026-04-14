@@ -11,11 +11,46 @@ from app.schemas import InstallDeckResponse, LibraryDeckDetail, LibraryDeckOut
 router = APIRouter(prefix="/library", tags=["Library"])
 
 
+@router.get("/card-levels", response_model=list[str])
+def list_library_card_levels(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ = current_user
+
+    rows = (
+        db.query(func.upper(func.trim(LibraryCard.level)).label("level"))
+        .join(LibraryDeck, LibraryDeck.id == LibraryCard.deck_id)
+        .filter(
+            LibraryDeck.is_public.is_(True),
+            LibraryCard.level.is_not(None),
+            func.trim(LibraryCard.level) != "",
+        )
+        .group_by(func.upper(func.trim(LibraryCard.level)))
+        .order_by(func.upper(func.trim(LibraryCard.level)).asc())
+        .all()
+    )
+
+    levels = [row.level for row in rows if row.level]
+    if levels:
+        return levels
+
+    fallback = (
+        db.query(func.upper(func.trim(LibraryDeck.level)).label("level"))
+        .filter(LibraryDeck.is_public.is_(True), LibraryDeck.level.is_not(None), func.trim(LibraryDeck.level) != "")
+        .group_by(func.upper(func.trim(LibraryDeck.level)))
+        .order_by(func.upper(func.trim(LibraryDeck.level)).asc())
+        .all()
+    )
+    return [row.level for row in fallback if row.level]
+
+
 @router.get("/decks", response_model=list[LibraryDeckOut])
 def list_library_decks(
     q: str | None = Query(default=None),
     level: str | None = Query(default=None),
     topic: str | None = Query(default=None),
+    card_levels: str | None = Query(default=None, description="Comma separated list, e.g. A2,B1,C1"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -51,6 +86,25 @@ def list_library_decks(
 
     if topic:
         query = query.filter(func.lower(LibraryDeck.topic) == topic.lower())
+
+    requested_levels = [
+        item.strip().upper()
+        for item in (card_levels or "").split(",")
+        if item and item.strip()
+    ]
+
+    if requested_levels:
+        card_level_match = (
+            db.query(LibraryCard.deck_id)
+            .join(LibraryDeck, LibraryDeck.id == LibraryCard.deck_id)
+            .filter(
+                LibraryDeck.is_public.is_(True),
+                func.upper(func.trim(func.coalesce(LibraryCard.level, ""))).in_(requested_levels),
+            )
+            .group_by(LibraryCard.deck_id)
+            .subquery()
+        )
+        query = query.join(card_level_match, card_level_match.c.deck_id == LibraryDeck.id)
 
     results = query.all()
     return [
@@ -123,10 +177,11 @@ def install_library_deck(
             UserDeck.user_id == current_user.id,
             UserDeck.source_library_deck_id == deck.id,
         )
+        .order_by(UserDeck.created_at.desc())
         .first()
     )
 
-    if existing_user_deck:
+    if existing_user_deck and existing_user_deck.is_active:
         installed_cards = db.query(UserCard).filter(UserCard.user_deck_id == existing_user_deck.id).count()
         return InstallDeckResponse(
             user_deck_id=existing_user_deck.id,
@@ -134,16 +189,20 @@ def install_library_deck(
             already_installed=True,
         )
 
-    user_deck = UserDeck(
-        user_id=current_user.id,
-        source_library_deck_id=deck.id,
-        title=deck.title,
-        description=deck.description,
-        level=deck.level,
-        topic=deck.topic,
-    )
-    db.add(user_deck)
-    db.flush()
+    if existing_user_deck and not existing_user_deck.is_active:
+        existing_user_deck.is_active = True
+        user_deck = existing_user_deck
+    else:
+        user_deck = UserDeck(
+            user_id=current_user.id,
+            source_library_deck_id=deck.id,
+            title=deck.title,
+            description=deck.description,
+            level=deck.level,
+            topic=deck.topic,
+        )
+        db.add(user_deck)
+        db.flush()
 
     cards = (
         db.query(LibraryCard)
@@ -152,20 +211,23 @@ def install_library_deck(
         .all()
     )
 
-    now = datetime.utcnow()
-    for card in cards:
-        db.add(
-            UserCard(
-                user_deck_id=user_deck.id,
-                source_library_card_id=card.id,
-                front_text=card.front_text,
-                back_text=card.back_text,
-                example_sentence=card.example_sentence,
-                phonetic=card.phonetic,
-                due_at=now,
+    existing_cards_count = db.query(UserCard).filter(UserCard.user_deck_id == user_deck.id).count()
+    if existing_cards_count == 0:
+        now = datetime.utcnow()
+        for card in cards:
+            db.add(
+                UserCard(
+                    user_deck_id=user_deck.id,
+                    source_library_card_id=card.id,
+                    front_text=card.front_text,
+                    back_text=card.back_text,
+                    example_sentence=card.example_sentence,
+                    phonetic=card.phonetic,
+                    due_at=now,
+                )
             )
-        )
 
     db.commit()
 
-    return InstallDeckResponse(user_deck_id=user_deck.id, installed_cards=len(cards), already_installed=False)
+    installed_count = db.query(UserCard).filter(UserCard.user_deck_id == user_deck.id).count()
+    return InstallDeckResponse(user_deck_id=user_deck.id, installed_cards=installed_count, already_installed=False)

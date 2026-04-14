@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     ai_api_base_url: str = Field(default="https://api.openai.com/v1", alias="AI_API_BASE_URL")
     ai_api_endpoint: str = Field(default="responses", alias="AI_API_ENDPOINT")
 
+    google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
+    google_oauth_redirect_uri: str = Field(default="", alias="GOOGLE_OAUTH_REDIRECT_URI")
+    google_auth_enabled: bool = Field(default=False, alias="GOOGLE_AUTH_ENABLED")
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

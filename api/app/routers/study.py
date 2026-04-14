@@ -12,12 +12,15 @@ from app.models import (
     ExerciseAnswer,
     ExerciseAttempt,
     ReviewLog,
+    StudySessionLog,
     User,
     UserCard,
     UserDeck,
 )
 from app.schemas import (
     ExerciseAttemptOut,
+    ExerciseCheckRequest,
+    ExerciseCheckResponse,
     ExerciseHintRequest,
     ExerciseHintResponse,
     ExerciseHistoryResponse,
@@ -104,7 +107,7 @@ def _next_schedule(rating: str, repetitions: int, interval_days: int, ease_facto
     return next_due_at, repetitions, interval_days, round(ease_factor, 2)
 
 
-def _build_mcq_options(target_card: UserCard, all_cards: list[UserCard]) -> list[str]:
+def _build_mcq_options(target_card: UserCard, all_cards: list[UserCard], exclude_options: set[str] | None = None) -> list[str]:
     correct = target_card.back_text.strip()
 
     distractor_candidates = []
@@ -116,7 +119,8 @@ def _build_mcq_options(target_card: UserCard, all_cards: list[UserCard]) -> list
             continue
         distractor_candidates.append(value)
 
-    seen = set()
+    excluded = exclude_options or set()
+    seen = set(excluded)
     unique_distractors: list[str] = []
     for item in distractor_candidates:
         key = _normalize_text(item)
@@ -142,7 +146,7 @@ def start_study_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id).first()
+    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id, UserDeck.is_active.is_(True)).first()
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 
@@ -177,6 +181,19 @@ def start_study_session(
             all_cards = db.query(UserCard).filter(UserCard.user_deck_id == deck.id).all()
             selected_cards = _pick_practice_cards(all_cards, payload.limit)
             session_mode = "practice"
+
+    db.add(
+        StudySessionLog(
+            user_id=current_user.id,
+            user_deck_id=deck.id,
+            mode=session_mode,
+            cards_count=len(selected_cards),
+            deck_title_snapshot=deck.title,
+            deck_level_snapshot=deck.level,
+            deck_topic_snapshot=deck.topic,
+        )
+    )
+    db.commit()
 
     return StudySessionStartResponse(
         deck_id=deck.id,
@@ -233,6 +250,8 @@ def review_card(
             user_card_id=card.id,
             rating=payload.rating,
             was_correct=payload.rating in {"hard", "good", "easy"},
+            front_text_snapshot=card.front_text,
+            back_text_snapshot=card.back_text,
             next_due_at=next_due_at,
         )
     )
@@ -255,46 +274,88 @@ def start_exercise(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id).first()
+    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id, UserDeck.is_active.is_(True)).first()
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
+
+    due_cards = (
+        db.query(func.count(UserCard.id))
+        .filter(UserCard.user_deck_id == deck.id, UserCard.due_at <= datetime.utcnow())
+        .scalar()
+    )
+
+    if due_cards and int(due_cards) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Deck còn {int(due_cards)} thẻ chưa học. Học flashcard trước rồi làm bài tập.",
+        )
 
     cards = db.query(UserCard).filter(UserCard.user_deck_id == deck.id).all()
     if len(cards) < 4:
         raise HTTPException(status_code=400, detail="Deck needs at least 4 cards for exercise")
 
     question_count = min(payload.question_count, len(cards))
-    selected_cards = random.sample(cards, k=question_count)
 
-    questions = []
+    last_attempt = (
+        db.query(ExerciseAttempt)
+        .filter(ExerciseAttempt.user_id == current_user.id, ExerciseAttempt.user_deck_id == deck.id)
+        .order_by(ExerciseAttempt.created_at.desc())
+        .first()
+    )
 
-    for idx, card in enumerate(selected_cards):
-        question_type = "multiple_choice" if idx % 2 == 0 else "hard_fill"
+    last_signature = ""
+    if last_attempt:
+        last_answers = (
+            db.query(ExerciseAnswer)
+            .filter(ExerciseAnswer.attempt_id == last_attempt.id)
+            .all()
+        )
+        last_signature = "|".join(
+            sorted(f"{item.user_card_id}:{item.question_type}" for item in last_answers)
+        )
 
-        if question_type == "multiple_choice":
-            questions.append(
-                {
-                    "user_card_id": card.id,
-                    "question_type": "multiple_choice",
-                    "question_text": card.front_text,
-                    "prompt_text": "Chọn nghĩa tiếng Việt đúng (4 đáp án)",
-                    "options": _build_mcq_options(card, cards),
-                    "answer_mask": None,
-                }
-            )
-        else:
-            questions.append(
-                {
-                    "user_card_id": card.id,
-                    "question_type": "hard_fill",
-                    "question_text": card.back_text,
-                    "prompt_text": "Điền từ tiếng Anh khó tương ứng",
-                    "options": [],
-                    "answer_mask": _mask_word(card.front_text),
-                }
-            )
+    def _generate_questions() -> tuple[list[dict], str]:
+        selected_cards = random.sample(cards, k=question_count)
+        generated: list[dict] = []
 
-    random.shuffle(questions)
+        for card in selected_cards:
+            question_type = random.choice(["multiple_choice", "hard_fill"])
+
+            if question_type == "multiple_choice":
+                generated.append(
+                    {
+                        "user_card_id": card.id,
+                        "question_type": "multiple_choice",
+                        "question_text": card.front_text,
+                        "prompt_text": "Chọn nghĩa tiếng Việt đúng (4 đáp án)",
+                        "options": _build_mcq_options(card, cards),
+                        "answer_mask": None,
+                    }
+                )
+            else:
+                generated.append(
+                    {
+                        "user_card_id": card.id,
+                        "question_type": "hard_fill",
+                        "question_text": card.back_text,
+                        "prompt_text": "Điền từ tiếng Anh khó tương ứng",
+                        "options": [],
+                        "answer_mask": _mask_word(card.front_text),
+                    }
+                )
+
+        random.shuffle(generated)
+        signature = "|".join(
+            sorted(f"{q['user_card_id']}:{q['question_type']}" for q in generated)
+        )
+        return generated, signature
+
+    questions: list[dict] = []
+    for _ in range(8):
+        candidate, signature = _generate_questions()
+        questions = candidate
+        if not last_signature or signature != last_signature:
+            break
 
     return ExerciseStartResponse(
         deck_id=deck.id,
@@ -309,7 +370,7 @@ def exercise_hint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id).first()
+    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id, UserDeck.is_active.is_(True)).first()
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 
@@ -333,13 +394,64 @@ def exercise_hint(
     return ExerciseHintResponse(hint=hint_text, source=source)
 
 
+@router.post("/exercise/check", response_model=ExerciseCheckResponse)
+def check_exercise_answer(
+    payload: ExerciseCheckRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id, UserDeck.is_active.is_(True)).first()
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck not found")
+
+    answer = payload.answer
+    card = (
+        db.query(UserCard)
+        .filter(UserCard.user_deck_id == deck.id, UserCard.id == answer.user_card_id)
+        .first()
+    )
+    if not card:
+        raise HTTPException(status_code=400, detail="Answer references invalid card")
+
+    user_ans = answer.answer.strip()
+
+    if answer.question_type == "multiple_choice":
+        question_text = card.front_text
+        prompt_text = "Chọn nghĩa tiếng Việt đúng (4 đáp án)"
+        correct_ans = card.back_text.strip()
+    elif answer.question_type == "hard_fill":
+        question_text = card.back_text
+        prompt_text = "Điền từ tiếng Anh khó tương ứng"
+        correct_ans = card.front_text.strip()
+    else:
+        raise HTTPException(status_code=400, detail="Invalid question_type")
+
+    is_correct = _normalize_text(user_ans) == _normalize_text(correct_ans)
+
+    return ExerciseCheckResponse(
+        deck_id=deck.id,
+        total_questions=1,
+        correct_answers=1 if is_correct else 0,
+        score_percent=100.0 if is_correct else 0.0,
+        answer={
+            "user_card_id": card.id,
+            "question_type": answer.question_type,
+            "question_text": question_text,
+            "prompt_text": prompt_text,
+            "correct_answer": correct_ans,
+            "user_answer": user_ans,
+            "is_correct": is_correct,
+        },
+    )
+
+
 @router.post("/exercise/submit", response_model=ExerciseSubmitResponse)
 def submit_exercise(
     payload: ExerciseSubmitRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id).first()
+    deck = db.query(UserDeck).filter(UserDeck.id == payload.deck_id, UserDeck.user_id == current_user.id, UserDeck.is_active.is_(True)).first()
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 
@@ -400,6 +512,7 @@ def submit_exercise(
         total_questions=total,
         correct_answers=correct_count,
         score_percent=score_percent,
+        deck_title_snapshot=deck.title,
     )
     db.add(attempt)
     db.flush()
@@ -437,7 +550,7 @@ def exercise_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    deck = db.query(UserDeck).filter(UserDeck.id == deck_id, UserDeck.user_id == current_user.id).first()
+    deck = db.query(UserDeck).filter(UserDeck.id == deck_id, UserDeck.user_id == current_user.id, UserDeck.is_active.is_(True)).first()
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 

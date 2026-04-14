@@ -66,7 +66,15 @@ flashcard/
   desktop/
     electron/
     src/
+  document/
+    FLASHCARD_STUDY_FLOW.md
+    REPORTS_ARCHITECTURE.md
 ```
+
+## Tài liệu
+
+- Luồng học chi tiết: `document/FLASHCARD_STUDY_FLOW.md`
+- Kiến trúc báo cáo v2: `document/REPORTS_ARCHITECTURE.md`
 
 ## Dữ liệu mẫu lớn (seed stress-test)
 

@@ -87,6 +87,7 @@ def seed_library(db: Session) -> None:
                     back_text=back,
                     example_sentence=example,
                     phonetic=phonetic,
+                    level=deck.level,
                 )
             )
 

@@ -16,14 +16,9 @@ import { api, getApiError, type LibraryDeck } from "../lib/api";
 
 type TabType = "all" | "installed" | "not-installed";
 type ViewMode = "card" | "table";
-type LevelFilter = "all" | "A2" | "B1" | "C1";
+type LevelFilter = "all" | "dynamic";
 
-const levelFilterOptions: Array<{ value: LevelFilter; label: string }> = [
-  { value: "all", label: "Tất cả" },
-  { value: "A2", label: "A2" },
-  { value: "B1", label: "B1" },
-  { value: "C1", label: "C1" },
-];
+const staticCefrOptions = ["A2", "B1", "C1"];
 
 const levelColor: Record<string, string> = {
   A1: "text-emerald-300 bg-emerald-500/10 border-emerald-400/30",
@@ -74,6 +69,8 @@ const Library: React.FC = () => {
   const [query, setQuery] = useState("");
   const [topicFilter, setTopicFilter] = useState("all");
   const [levelFilter, setLevelFilter] = useState<LevelFilter>("all");
+  const [availableCardLevels, setAvailableCardLevels] = useState<string[]>([]);
+  const [selectedCardLevels, setSelectedCardLevels] = useState<string[]>([]);
   const [tab, setTab] = useState<TabType>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("card");
 
@@ -89,7 +86,17 @@ const Library: React.FC = () => {
       setLoading(true);
       setLoadingError(null);
 
-      const [library, myDecks] = await Promise.all([api.getLibraryDecks(), api.getMyDecks()]);
+      const [library, myDecks] = await Promise.all([
+        api.getLibraryDecks({ card_levels: selectedCardLevels.length ? selectedCardLevels.join(",") : undefined }),
+        api.getMyDecks(),
+      ]);
+
+      let cardLevels: string[] = [];
+      try {
+        cardLevels = await api.getLibraryCardLevels();
+      } catch {
+        cardLevels = staticCefrOptions;
+      }
 
       const installedFromServer = new Set(
         myDecks
@@ -99,6 +106,7 @@ const Library: React.FC = () => {
 
       setDecks(library);
       setInstalledDeckIds(installedFromServer);
+      setAvailableCardLevels(cardLevels);
     } catch (error) {
       setLoadingError(getApiError(error, "Không tải được thư viện"));
     } finally {
@@ -108,7 +116,7 @@ const Library: React.FC = () => {
 
   useEffect(() => {
     void loadDecks();
-  }, []);
+  }, [selectedCardLevels]);
 
   useEffect(() => {
     if (!toast) return;
@@ -144,8 +152,10 @@ const Library: React.FC = () => {
         .filter(Boolean);
       const hitLevel =
         levelFilter === "all" ||
-        deck.level.toUpperCase() === levelFilter ||
-        normalizedTags.includes(levelFilter.toLowerCase());
+        selectedCardLevels.length === 0 ||
+        selectedCardLevels.some(
+          (lv) => deck.level.toUpperCase() === lv || normalizedTags.includes(lv.toLowerCase()),
+        );
 
       const installed = installedDeckIds.has(deck.id);
       const hitTab =
@@ -153,7 +163,7 @@ const Library: React.FC = () => {
 
       return hitQuery && hitTopic && hitLevel && hitTab;
     });
-  }, [decks, query, topicFilter, levelFilter, tab, installedDeckIds]);
+  }, [decks, query, topicFilter, levelFilter, selectedCardLevels, tab, installedDeckIds]);
 
   const installDeck = async (deck: LibraryDeck) => {
     try {
@@ -201,12 +211,12 @@ const Library: React.FC = () => {
   };
 
   return (
-    <div className="space-y-7 animate-fade-up">
+    <div className="app-page animate-fade-up">
       <header className="rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-900 via-slate-900 to-sky-950/40 p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Thư viện flashcard</h1>
-            <p className="mt-2 text-sm text-slate-400 max-w-2xl">
+            <h1 className="app-title">Thư viện flashcard</h1>
+            <p className="mt-2 app-subtitle max-w-2xl">
               Kho deck học tiếng Anh theo chủ đề. Mày có thể phân biệt rõ deck đã cài/chưa cài, lọc nhanh theo
               trình độ và cài một chạm.
             </p>
@@ -220,23 +230,23 @@ const Library: React.FC = () => {
         </div>
       </header>
 
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+      <section className="app-card p-4">
         <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <label className="relative flex-1">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_280px_auto] lg:items-center">
+            <label className="relative min-w-0">
+              <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Tìm theo tên deck, topic, tag..."
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-9 py-2.5 text-sm outline-none focus:border-sky-400"
+                className="app-input h-11 px-10 text-sm md:text-[15px] focus:border-sky-400"
               />
             </label>
 
             <select
               value={topicFilter}
               onChange={(e) => setTopicFilter(e.target.value)}
-              className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-sky-400"
+              className="app-input h-11 w-full shrink-0 px-4 text-sm font-medium focus:border-sky-400"
             >
               {topics.map((topic) => (
                 <option key={topic} value={topic}>
@@ -245,7 +255,7 @@ const Library: React.FC = () => {
               ))}
             </select>
 
-            <div className="inline-flex rounded-xl border border-slate-700 bg-slate-950 p-1 text-xs self-start">
+            <div className="inline-flex w-fit rounded-xl border border-slate-700 bg-slate-950 p-1 text-xs self-start lg:self-auto">
               <FilterBtn active={viewMode === "card"} onClick={() => setViewMode("card")}>
                 <LayoutGrid size={13} /> Thẻ
               </FilterBtn>
@@ -270,20 +280,36 @@ const Library: React.FC = () => {
 
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-slate-400">Lọc thẻ:</span>
-              {levelFilterOptions.map((opt) => {
-                const active = levelFilter === opt.value;
+              <button
+                type="button"
+                onClick={() => setSelectedCardLevels([])}
+                className={`rounded-full border px-3 py-1 text-xs transition ${
+                  selectedCardLevels.length === 0
+                    ? "border-sky-400/50 bg-sky-500/15 text-sky-200"
+                    : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
+                }`}
+              >
+                Tất cả
+              </button>
+
+              {(availableCardLevels.length > 0 ? availableCardLevels : staticCefrOptions).map((lv) => {
+                const active = selectedCardLevels.includes(lv);
                 return (
                   <button
-                    key={opt.value}
+                    key={lv}
                     type="button"
-                    onClick={() => setLevelFilter(opt.value)}
+                    onClick={() => {
+                      setSelectedCardLevels((prev) =>
+                        prev.includes(lv) ? prev.filter((item) => item !== lv) : [...prev, lv],
+                      );
+                    }}
                     className={`rounded-full border px-3 py-1 text-xs transition ${
                       active
                         ? "border-sky-400/50 bg-sky-500/15 text-sky-200"
                         : "border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800"
                     }`}
                   >
-                    {opt.label}
+                    {lv}
                   </button>
                 );
               })}
@@ -293,7 +319,7 @@ const Library: React.FC = () => {
       </section>
 
       {loading && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-400">Đang tải thư viện...</div>
+        <div className="app-card-soft p-5 text-sm text-slate-400">Đang tải thư viện...</div>
       )}
 
       {loadingError && (
@@ -365,7 +391,7 @@ const Library: React.FC = () => {
       )}
 
       {!loading && !loadingError && viewMode === "table" && (
-        <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/65">
+        <section className="app-card overflow-hidden bg-slate-900/65">
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead>
@@ -423,7 +449,7 @@ const Library: React.FC = () => {
       )}
 
       {!loading && !loadingError && filtered.length === 0 && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">Không tìm thấy bộ thẻ phù hợp với bộ lọc hiện tại.</div>
+        <div className="app-empty">Không tìm thấy bộ thẻ phù hợp với bộ lọc hiện tại.</div>
       )}
 
       {toast && (
